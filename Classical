@@ -3,6 +3,7 @@ from scipy.ndimage import label, binary_dilation
 from PIL import Image
 
 
+
 def generate_forest(L, p):
   return np.random.rand(L, L) < p
 
@@ -27,8 +28,1195 @@ def fire_propagation(forest):
     burned |= burning
     neighbors = binary_dilation(burning, structure=structure) & forest &␣
 ↪~burned
+
     burning = neighbors
 
   last_frame = render_frame(forest, burned) # guardar último frame
 
   return burned, frames, first_frame, last_frame
+
+
+
+def render_frame(forest, burned):
+  L = forest.shape[0]
+  frame = np.zeros((L, L, 3), dtype=np.uint8)
+
+  frame[~forest] = [255, 255, 255] 
+  frame[forest] = [34, 139, 34] 
+  frame[forest & burned] = [139, 0, 0] 
+  return Image.fromarray(frame)
+
+
+def render_initial_frame(forest, ignition_point):
+    L = forest.shape[0]
+    frame = np.zeros((L, L, 3), dtype=np.uint8)
+    frame[~forest] = [255, 255, 255]
+    frame[forest] = [34, 139, 34]
+    i, j = ignition_point
+    frame[i, j] = [255, 165, 0]
+    return Image.fromarray(frame)
+
+def save_gif(frames, filename='fire.gif', scale=4, duration=100):
+    if not frames:
+        print("No frames generated.")
+        return
+    resized = [f.resize((f.width * scale, f.height * scale), resample=Image.NEAREST) for f in frames]
+    resized[0].save(filename, save_all=True, append_images=resized[1:], duration=duration, loop=0)
+    print(f"Fire animation saved as {filename}")
+
+def percolates(burned):
+    structure = np.array([[0,1,0],[1,1,1],[0,1,0]], dtype=bool)
+    labeled, num = label(burned, structure=structure)
+    for i in range(1, num + 1):
+        cluster = (labeled == i)
+        top = np.any(cluster[0, :])
+        bottom = np.any(cluster[-1, :])
+        left = np.any(cluster[:, 0])
+        right = np.any(cluster[:, -1])
+        if (top and bottom) or (left and right):
+            return True
+    return False
+
+
+if __name__ == '__main__':
+    try:
+        L = int(input("L: "))
+        p = float(input("Tree density p: "))
+    except:
+        print("Invalid input. Using default values.")
+        L = 128
+        p = 0.6
+
+    forest = generate_forest(L, p)
+    burned, frames, first_frame, last_frame = fire_propagation(forest)
+
+    if first_frame:
+        first_frame.save('first_frame.png')
+        print("First frame saved as first_frame.png")
+    if last_frame:
+        last_frame.save('last_frame.png')
+        print("Last frame saved as last_frame.png")
+
+    save_gif(frames)
+    print("Does the fire percolate?", percolates(burned))
+
+--------------------------------------------------------------------
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.ndimage import label
+from tqdm import tqdm
+
+
+def estimate_pc(L, n_trials=200, resolution=0.01):
+    ps = np.arange(0.5, 0.65 + resolution, resolution)
+    perc_probs = []
+    errors = []
+
+    for p in tqdm(ps, desc=f"Estimating pc for L={L}"):
+        outcomes = [percolates(generate_forest(L, p)) for _ in range(n_trials)]
+        prob = np.mean(outcomes)
+        perc_probs.append(prob)
+        std_err = np.std(outcomes, ddof=1) / np.sqrt(n_trials)
+        errors.append(std_err)
+
+    perc_probs = np.array(perc_probs)
+    errors = np.array(errors)
+    grad = np.gradient(perc_probs, ps)
+    idx_pc = np.argmax(grad)
+    pc_estimate = ps[idx_pc]
+    pc_stat_error = errors[idx_pc]
+
+    return ps, perc_probs, errors, pc_estimate, pc_stat_error, idx_pc
+
+
+def save_results_txt(filename, ps, probs, errors):
+    with open(filename, 'w') as f:
+        f.write("# p probability std_error\n")
+        for p, prob, err in zip(ps, probs, errors):
+            f.write(f"{p:.5f} {prob:.5f} {err:.5f}\n")
+    print(f"Results saved to {filename}")
+
+L_values = [16, 32, 64, 128]
+colors = plt.cm.viridis(np.linspace(0, 1, len(L_values)))
+pc_list = []
+pc_list_err = []
+
+plt.figure(figsize=(12, 7))
+
+for i, L in enumerate(L_values):
+    n_trials = 400
+    ps, probs, errors, pc_L, pc_stat_err, idx_pc = estimate_pc(L, n_trials, resolution=0.01)
+    save_results_txt(f"results_L{L}.txt", ps, probs, errors)
+    pc_list.append(pc_L)
+    pc_list_err.append(pc_stat_err)
+    color = colors[i]
+    plt.errorbar(
+        ps, probs, yerr=errors, fmt='.-', capsize=2,
+        color=color,
+        label=f"L = {L}, $p_c$ = {pc_L:.3f} ± {pc_stat_err:.3f}",
+        zorder=2
+    )
+    plt.plot(pc_L, probs[idx_pc], 'o', color='red', markersize=8, zorder=5)
+    plt.errorbar(
+        pc_L, probs[idx_pc], yerr=pc_stat_err,
+        fmt='o', color='red', capsize=4, capthick=2, zorder=6
+    )
+
+plt.xlabel('Tree density $p$')
+plt.ylabel('Percolation probability')
+plt.title('Estimation of $p_c$')
+plt.axhline(0.5, color='gray', ls='--', label='$P = 0.5$')
+plt.grid(True, alpha=0.3)
+plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.tight_layout()
+plt.show()
+ --------------------------------------------------
+
+import os
+import glob
+import matplotlib.pyplot as plt
+import numpy as np
+
+carpeta = "datos clasico cuadrado pc"
+ruta_archivos = os.path.join(carpeta, "*.txt")
+files = sorted(glob.glob(ruta_archivos))
+colors = plt.cm.viridis(np.linspace(0, 1, len(files)))
+pc_list = []
+pc_list_err = []
+
+plt.figure(figsize=(8, 6))
+
+for i, filename in enumerate(files):
+    nombre_archivo = os.path.basename(filename)
+    L = int(''.join(filter(str.isdigit, nombre_archivo)))
+
+    data = np.loadtxt(filename, comments="#")
+    ps = data[:, 0]
+    probs = data[:, 1]
+    errors = data[:, 2]
+
+    deriv = np.gradient(probs, ps)
+    idx_pc = np.argmax(deriv)
+    pc_L = ps[idx_pc]
+    pc_stat_err = errors[idx_pc]
+
+    pc_list.append(pc_L)
+    pc_list_err.append(pc_stat_err)
+
+    color = colors[i]
+    plt.errorbar(
+        ps, probs, yerr=errors, fmt='.-', capsize=2,
+        color=color,
+        label=f"$L = {L}$, $p_c$ = {pc_L:.3f} $\pm$ {pc_stat_err:.3f}",
+        zorder=2
+    )
+    plt.plot(pc_L, probs[idx_pc], 'o', color='red', markersize=8, zorder=5)
+    plt.errorbar(
+        pc_L, probs[idx_pc], yerr=pc_stat_err,
+        fmt='o', color='red', capsize=4, capthick=2, zorder=6
+    )
+
+plt.axhline(0.5, color='gray', ls='--', label='$P = 0.5$', zorder=1)
+plt.xlabel('Tree density $p$')
+plt.ylabel('Percolation probability')
+plt.title('Estimation of $p_c$')
+plt.grid(True, alpha=0.3)
+plt.legend(loc='upper left')
+plt.savefig('pc_estimation.png', dpi=300)
+plt.tight_layout()
+plt.show()
+ ----------------------------------------------------
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+
+L_values = np.array([16, 32, 64, 128])
+nu = 4/3
+inv_L = L_values ** (-1 / nu)
+
+pc_array = np.array(pc_list)
+pc_err_array = np.array(pc_list_err)
+
+with open("finite_size_data.txt", "w") as f:
+    f.write("# L 1/L^nu pc(L) error\n")
+    for L, x, y, err in zip(L_values, inv_L, pc_array, pc_err_array):
+        f.write(f"{L} {x:.6f} {y:.6f} {err:.6f}\n")
+
+print("Saved data points to 'finite_size_data.txt'")
+
+def linear_func(x, m, b):
+    return m * x + b
+
+popt, pcov = curve_fit(
+    linear_func,
+    inv_L,
+    pc_array,
+    sigma=pc_err_array,
+    absolute_sigma=True
+)
+m, b = popt
+error_m, error_b = np.sqrt(np.diag(pcov))
+
+with open("extrapolated_pc.txt", "w") as f:
+    f.write("# Weighted linear fit: pc(L) = m * (1/L^nu) + b\n")
+    f.write(f"slope m = {m:.6f} ± {error_m:.6f}\n")
+    f.write(f"intercept b = {b:.6f} ± {error_b:.6f}\n")
+    f.write(f"pc(infinity) = {b:.6f} ± {error_b:.6f}\n")
+
+print("Saved fit results to 'extrapolated_pc.txt'")
+
+x_fit = np.linspace(0, max(inv_L) + 0.01, 100)
+y_fit = linear_func(x_fit, m, b)
+
+plt.figure(figsize=(10, 7))
+plt.xlim([-0.001, max(inv_L) + 0.01])
+plt.errorbar(
+    0, b, yerr=error_b, fmt='ro', capsize=5, markersize=8,
+    label=f'$p_c(\\infty) = {b:.4f} \\pm {error_b:.4f}$'
+)
+
+
+plt.errorbar(inv_L, pc_array, yerr=pc_err_array, fmt='bo', capsize=5,
+             label='Simulation data', markersize=6)
+
+plt.plot(x_fit, y_fit, 'k--', alpha=0.8,
+         label=f'$p_c = {m:.3f} \\cdot L^{{-1/\\nu}} + {b:.4f}$')
+
+plt.xlabel(r'$L^{-1/\nu}$ with $\nu = 4/3$', fontsize=12)
+plt.ylabel(r'$p_c(L)$', fontsize=12)
+plt.title('Extrapolation of $p_c$ to the thermodynamic limit ($L \\to \\infty$)', fontsize=14)
+plt.grid(True, alpha=0.3)
+plt.legend(fontsize=11)
+plt.tight_layout()
+
+plt.savefig("pc_extrapolation_weighted.png", dpi=300, bbox_inches='tight')
+print("Saved plot to 'pc_extrapolation_weighted.png'")
+plt.show()
+
+y_pred = linear_func(inv_L, m, b)
+ss_res = np.sum((pc_array - y_pred) ** 2)
+ss_tot = np.sum((pc_array - np.mean(pc_array)) ** 2)
+r_squared = 1 - (ss_res / ss_tot)
+
+print(f"\nFit quality:")
+print(f"R² = {r_squared:.6f}")
+
+pc_theoretical = 0.5927
+print(f"\nComparison with theoretical value:")
+print(f"Extrapolated pc: {b:.4f} ± {error_b:.4f}")
+print(f"Theoretical pc (2D): {pc_theoretical:.4f}")
+print(f"Absolute difference: {abs(b - pc_theoretical):.4f}")
+
+----------------------------------------------
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.ndimage import label
+
+
+def generate_forest(L, p):
+    return np.random.rand(L, L) < p
+
+def cluster_sizes(forest):
+   
+    labeled, num_clusters = label(forest)
+    sizes = np.bincount(labeled.ravel())
+    return sizes[1:]  # Remove label 0 (background)
+
+def gather_cluster_sizes(L, p, n_samples=100):
+   
+    all_sizes = []
+    for _ in range(n_samples):
+        forest = generate_forest(L, p)
+        sizes = cluster_sizes(forest)
+        all_sizes.extend(sizes)
+    return all_sizes
+
+
+def log_binned_histogram_with_errors(sizes, base=1.3):
+    s = np.array(sizes)
+    s = s[s > 0]
+    if len(s) == 0:
+        return np.array([]), np.array([]), np.array([])
+    max_s = s.max()
+    bins = np.unique(np.logspace(np.log10(1), np.log10(max_s), int(np.log(max_s)/np.log(base))).astype(int))
+    hist, edges = np.histogram(s, bins=bins)
+    centers = (edges[:-1] + edges[1:]) / 2
+    bin_widths = edges[1:] - edges[:-1]
+    total_samples = len(s)
+    norm_hist = hist / (bin_widths * total_samples)
+    errors = np.sqrt(hist) / (bin_widths * total_samples)
+    valid = norm_hist > 0
+    return centers[valid], norm_hist[valid], errors[valid]
+
+def estimate_tau(centers, freqs, errors, s_min=10, s_max=300):
+    mask = (centers >= s_min) & (centers <= s_max) & (freqs > 0)
+    if np.sum(mask) < 3:
+        return None, None, None
+    log_s = np.log(centers[mask])
+    log_ns = np.log(freqs[mask])
+    weights = freqs[mask] / errors[mask]
+    weights = weights / np.sum(weights)
+    coeffs, cov = np.polyfit(log_s, log_ns, 1, w=weights, cov=True)
+    tau = -coeffs[0]
+    tau_err = np.sqrt(cov[0, 0])
+    return tau, tau_err, coeffs
+
+
+L = 128
+pc_estimate = 0.6036
+p_values = [pc_estimate - 0.3, pc_estimate, pc_estimate + 0.2]
+colors = ['blue', 'red', 'green']
+tau_estimate = None
+
+plt.figure(figsize=(10, 7))
+
+for i, p in enumerate(p_values):
+    print(f"Running simulation for p = {p:.4f} ...")
+    sizes = gather_cluster_sizes(L, p, n_samples=2000)
+    print(f" Total clusters: {len(sizes)}")
+    if sizes:
+        print(f" Max cluster size: {max(sizes)}")
+        print(f" Clusters with size > 100: {sum(s > 100 for s in sizes)}")
+    
+    centers, freqs, errors = log_binned_histogram_with_errors(sizes)
+    
+    plt.errorbar(
+        centers, freqs, yerr=errors, marker='o', linestyle='-',
+        capsize=3, capthick=1, color=colors[i],
+        label=f'$p = {p:.4f}$', alpha=0.8
+    )
+
+    if abs(p - pc_estimate) < 0.001:
+        tau, tau_err, coeffs = estimate_tau(centers, freqs, errors)
+        if tau:
+            tau_estimate = tau
+            tau_error = tau_err
+            s_fit = np.logspace(np.log10(5), np.log10(500), 50)
+            fit_line = np.exp(coeffs[1]) * s_fit**(-tau)
+            plt.plot(
+                s_fit, fit_line, 'k--', linewidth=2,
+                label=f'$\\tau = {tau:.3f} \\pm {tau_err:.3f}$'
+            )
+            print(f"Estimated τ: {tau:.4f} ± {tau_err:.4f}")
+
+
+plt.xscale('log')
+plt.yscale('log')
+plt.xlim(1, 3e3)
+plt.xlabel('Cluster size $s$', fontsize=12)
+plt.ylabel('Frequency density', fontsize=12)
+plt.title(f'Distribution of cluster sizes for different $p$ (L = {L})', fontsize=14)
+plt.legend(fontsize=10)
+plt.grid(True, which="both", ls="--", alpha=0.3)
+plt.tight_layout()
+plt.savefig("tau_with_errors.png", dpi=300, bbox_inches='tight')
+plt.show()
+
+if tau_estimate:
+    print("\nFinal result:")
+    print(f"Estimated τ = {tau_estimate:.3f} ± {tau_error:.3f} (for p ≈ p_c)")
+    tau_theoretical = 187 / 91
+    print(f"Theoretical τ = 187/91 = {tau_theoretical:.3f}")
+    print(f"Absolute difference: {abs(tau_estimate - tau_theoretical):.3f}")
+else:
+    print("Could not estimate τ. Please check the fitting range or simulation parameters.")
+
+----------------------------------------------------------------
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.ndimage import label
+
+def generate_forest(L, p):
+    return np.random.rand(L, L) < p
+
+def largest_cluster_size(forest):
+    labeled, num = label(forest)
+    sizes = np.bincount(labeled.ravel())
+    if len(sizes) <= 1:
+        return 0
+    return sizes[1:].max()
+
+def average_largest_cluster_with_error(L, p, n_samples=100):
+    sizes = []
+    for _ in range(n_samples):
+        forest = generate_forest(L, p)
+        sizes.append(largest_cluster_size(forest))
+    sizes = np.array(sizes)
+    mean_size = np.mean(sizes)
+    std_dev = np.std(sizes, ddof=1)
+    error = std_dev / np.sqrt(n_samples)
+    return mean_size, error
+
+L_values = [16, 32, 64, 128]
+p_c_approx = 0.5989
+n_samples = 4000
+
+M_values = []
+M_errors = []
+
+print("Running simulations for different system sizes...")
+
+for L in L_values:
+    print(f" L = {L}")
+    avg_size, error = average_largest_cluster_with_error(L, p_c_approx, n_samples)
+    M_values.append(avg_size)
+    M_errors.append(error)
+
+M_values = np.array(M_values)
+M_errors = np.array(M_errors)
+
+log_L = np.log10(L_values)
+log_M = np.log10(M_values)
+log_M_errors = M_errors / (M_values * np.log(10))
+
+weights = 1 / log_M_errors**2
+coeffs, cov = np.polyfit(log_L, log_M, 1, w=weights, cov=True)
+d_f = coeffs[0]
+intercept = coeffs[1]
+df_err = np.sqrt(cov[0, 0])
+
+print("\nResults:")
+print(f"L values: {L_values}")
+print(f"Average largest cluster sizes: {M_values}")
+print(f"Errors: {M_errors}")
+
+
+plt.figure(figsize=(10, 7))
+
+plt.errorbar(log_L, log_M, yerr=log_M_errors, fmt='o', capsize=7,
+             capthick=2, elinewidth=2, markersize=8, label='Data')
+
+x_fit = np.linspace(min(log_L), max(log_L), 100)
+y_fit = d_f * x_fit + intercept
+plt.plot(x_fit, y_fit, '--', color='blue', linewidth=2,
+         label=f'Fit: slope = {d_f:.3f} ± {df_err:.3f}')
+
+plt.xlabel(r'$\log_{10} L$', fontsize=14)
+plt.ylabel(r'$\log_{10} M(L)$', fontsize=14)
+plt.title(f'Fractal dimension\n$d_f = {d_f:.3f} \pm {df_err:.3f}$', fontsize=14)
+plt.legend(fontsize=12)
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig("fractal_dimension_plot.png", dpi=300, bbox_inches='tight')
+plt.show()
+
+print(f"\nEstimated fractal dimension d_f = {d_f:.3f} ± {df_err:.3f}")
+print("Theoretical value for 2D percolation: d_f ≈ 1.896")
+
+y_pred = d_f * log_L + intercept
+ss_res = np.sum((log_M - y_pred) ** 2)
+ss_tot = np.sum((log_M - np.mean(log_M)) ** 2)
+r_squared = 1 - (ss_res / ss_tot)
+print(f"R² of the fit: {r_squared:.4f}")
+
+------------------------------------------------------------
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+def generate_forest(L, p):
+    return np.random.rand(L, L) < p
+
+def get_triangular_neighbors(i, j, L):
+    if i % 2 == 0:
+        neighbor_offsets = [(-1, -1), (-1, 0), (0, -1), (0, +1), (+1, -1), (+1, 0)]
+    else:
+        neighbor_offsets = [(-1, 0), (-1, +1), (0, -1), (0, +1), (+1, 0), (+1, +1)]
+    neighbors = []
+    for di, dj in neighbor_offsets:
+        ni, nj = i + di, j + dj
+        if 0 <= ni < L and 0 <= nj < L:
+            neighbors.append((ni, nj))
+    return neighbors
+
+def fire_propagation_minimal(forest):
+    L = forest.shape[0]
+    burning = np.zeros_like(forest, dtype=bool)
+    burned = np.zeros_like(forest, dtype=bool)
+    tree_positions = np.argwhere(forest)
+    if len(tree_positions) == 0:
+        return (burning.copy(), burned.copy()), (burning.copy(), burned.copy())
+    # Random ignition point
+    i, j = tree_positions[np.random.randint(len(tree_positions))]
+    burning[i, j] = True
+    first_burning = burning.copy()
+    first_burned = burned.copy()
+    # Spread fire until no trees are burning
+    while np.any(burning):
+        new_burning = np.zeros_like(burning)
+        for i_b, j_b in np.argwhere(burning):
+            for ni, nj in get_triangular_neighbors(i_b, j_b, L):
+                if forest[ni, nj] and not burned[ni, nj] and not burning[ni, nj]:
+                    new_burning[ni, nj] = True
+        burned |= burning
+        burning = new_burning
+    return (first_burning, first_burned), (burning.copy(), burned.copy())
+
+
+def draw_forest_frame(forest, burning, burned, L, frame_name):
+    fig, ax = plt.subplots(figsize=(6, 6))
+    for i in range(L):
+        for j in range(L):
+            x = j + 0.5 * (i % 2)
+            y = i * np.sqrt(3) / 2
+            if burned[i, j]:
+                color = 'red'
+                radius = 0.45
+            elif burning[i, j]:
+                color = 'orange'
+                radius = 0.5
+            elif forest[i, j]:
+                color = 'green'
+                radius = 0.35
+            else:
+                color = 'lightgray'
+                radius = 0.25
+            circle = plt.Circle((x, y), radius, color=color, edgecolor='black', linewidth=0.1)
+            ax.add_patch(circle)
+    ax.set_xlim(-1, L)
+    ax.set_ylim(-1, L * np.sqrt(3) / 2)
+    ax.set_aspect('equal')
+    ax.axis('off')
+    ax.set_title(frame_name, fontsize=10)
+    plt.savefig(f"{frame_name}.png", bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {frame_name}.png")
+
+
+def main():
+    while True:
+        try:
+            L = int(input("L: "))
+            if L <= 0:
+                raise ValueError
+            break
+        except ValueError:
+            print("Please enter a positive integer for L.")
+    
+    while True:
+        try:
+            p = float(input("Tree probability p: "))
+            if not (0 <= p <= 1):
+                raise ValueError
+            break
+        except ValueError:
+            print("Please enter a valid probability between 0 and 1.")
+    
+    forest = generate_forest(L, p)
+    (burning_initial, burned_initial), (_, burned_final) = fire_propagation_minimal(forest)
+    
+    draw_forest_frame(forest, burning_initial, burned_initial, L, f'frame_initial_L{L}_p{p:.2f}')
+    draw_forest_frame(forest, np.zeros_like(forest), burned_final, L, f'frame_final_L{L}_p{p:.2f}')
+    
+    print("\nSimulation complete. Images saved.\n")
+
+
+if __name__ == '__main__':
+    main()
+-----------------------------------------------
+
+import numpy as np
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+
+def generate_forest(L, p):
+    return np.random.rand(L, L) < p
+
+def get_triangular_neighbors(i, j, L):
+    if i % 2 == 0:
+        neighbor_offsets = [(-1, -1), (-1, 0), (0, -1), (0, 1), (1, -1), (1, 0)]
+    else:
+        neighbor_offsets = [(-1, 0), (-1, 1), (0, -1), (0, 1), (1, 0), (1, 1)]
+    neighbors = []
+    for di, dj in neighbor_offsets:
+        ni, nj = i + di, j + dj
+        if 0 <= ni < L and 0 <= nj < L:
+            neighbors.append((ni, nj))
+    return neighbors
+
+def fire_propagation(forest):
+    L = forest.shape[0]
+    burning = np.zeros_like(forest, dtype=bool)
+    burned = np.zeros_like(forest, dtype=bool)
+    tree_positions = np.argwhere(forest)
+    if len(tree_positions) == 0:
+        return burned
+    start_idx = np.random.randint(len(tree_positions))
+    i, j = tree_positions[start_idx]
+    burning[i, j] = True
+    while np.any(burning):
+        new_burning = np.zeros_like(burning)
+        for i_b, j_b in np.argwhere(burning):
+            for ni, nj in get_triangular_neighbors(i_b, j_b, L):
+                if forest[ni, nj] and not burned[ni, nj] and not burning[ni, nj]:
+                    new_burning[ni, nj] = True
+        burned |= burning
+        burning = new_burning
+    return burned
+def check_vertical_percolation(burned):
+    L = burned.shape[0]
+    visited = np.zeros_like(burned, dtype=bool)
+    queue = [(0, j) for j in range(L) if burned[0, j]]
+    for pos in queue:
+        visited[pos] = True
+    while queue:
+        i, j = queue.pop(0)
+        if i == L - 1:
+            return True
+        for ni, nj in get_triangular_neighbors(i, j, L):
+            if burned[ni, nj] and not visited[ni, nj]:
+                visited[ni, nj] = True
+                queue.append((ni, nj))
+    return False
+
+def check_horizontal_percolation(burned):
+    L = burned.shape[0]
+    visited = np.zeros_like(burned, dtype=bool)
+    queue = [(i, 0) for i in range(L) if burned[i, 0]]
+    for pos in queue:
+        visited[pos] = True
+    while queue:
+        i, j = queue.pop(0)
+        if j == L - 1:
+            return True
+        for ni, nj in get_triangular_neighbors(i, j, L):
+            if burned[ni, nj] and not visited[ni, nj]:
+                visited[ni, nj] = True
+                queue.append((ni, nj))
+    return False
+
+def check_percolation(burned):
+    return check_vertical_percolation(burned) or check_horizontal_percolation(burned)
+
+def estimate_pc(L, n_trials=200, resolution=0.01):
+    ps = np.arange(0.42, 0.57 + resolution, resolution)
+    perc_probs = []
+    errors = []
+    for p in tqdm(ps, desc=f"Estimating pc for L={L}"):
+        outcomes = []
+        for _ in range(n_trials):
+            forest = generate_forest(L, p)
+            burned = fire_propagation(forest)
+            outcomes.append(check_percolation(burned))
+        prob = np.mean(outcomes)
+        perc_probs.append(prob)
+        std_err = np.std(outcomes, ddof=1) / np.sqrt(n_trials)
+        errors.append(std_err)
+    perc_probs = np.array(perc_probs)
+    errors = np.array(errors)
+    grad = np.gradient(perc_probs, ps)
+    idx_pc = np.argmax(grad)
+    pc_estimate = ps[idx_pc]
+    pc_stat_err = errors[idx_pc]
+    return ps, perc_probs, errors, pc_estimate, pc_stat_err, idx_pc
+
+def save_results_txt(filename, ps, probs, errors):
+    with open(filename, "w") as f:
+        f.write("# p\tPercolationProb\tError\n")
+        for p, prob, err in zip(ps, probs, errors):
+            f.write(f"{p:.4f}\t{prob:.6f}\t{err:.6f}\n")
+if __name__ == "__main__":
+    L_values = [16, 32, 64, 128]
+    colors = plt.cm.viridis(np.linspace(0, 1, len(L_values)))
+    pc_list = []
+    pc_list_err = []
+    plt.figure(figsize=(12, 7))
+    for i, L in enumerate(L_values):
+        n_trials = 400
+        ps, probs, errors, pc_L, pc_stat_err, idx_pc = estimate_pc(L, n_trials, resolution=0.01)
+        save_results_txt(f"results_triangular_L{L}.txt", ps, probs, errors)
+        pc_list.append(pc_L)
+        pc_list_err.append(pc_stat_err)
+        color = colors[i]
+        plt.errorbar(ps, probs, yerr=errors, fmt='.-', capsize=2, color=color,
+                     label=f"L = {L}, $p_c$ = {pc_L:.3f} ± {pc_stat_err:.3f}", zorder=2)
+        plt.plot(pc_L, probs[idx_pc], 'o', color='red', markersize=8, zorder=5)
+        plt.errorbar(pc_L, probs[idx_pc], yerr=pc_stat_err, fmt='o', color='red', capsize=4, capthick=2, zorder=6)
+    plt.xlabel('Tree density $p$')
+    plt.ylabel('Percolation probability')
+    plt.title('Estimation of $p_c$ for triangular lattice')
+    plt.axhline(0.5, color='gray', ls='--', label='$P = 0.5$')
+    plt.grid(True, alpha=0.3)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    plt.savefig('pc_estimation_triangular.png', dpi=300)
+    print("Plot saved as pc_estimation_triangular.png")
+    plt.show()
+---------------------------------
+
+import matplotlib.pyplot as plt
+import numpy as np
+import glob
+import os
+
+carpeta = "datos clasico triangular pc"
+ruta_archivos = os.path.join(carpeta, "*.txt")
+files = sorted(glob.glob(ruta_archivos))
+colors = plt.cm.viridis(np.linspace(0, 1, len(files)))
+pc_list = []
+pc_list_err = []
+plt.figure(figsize=(8, 6))
+
+for i, filename in enumerate(files):
+    nombre_archivo = os.path.basename(filename)
+    L = int(''.join(filter(str.isdigit, nombre_archivo)))
+    data = np.loadtxt(filename, comments="#")
+    ps = data[:, 0]
+    probs = data[:, 1]
+    errors = data[:, 2]
+    deriv = np.gradient(probs, ps)
+    idx_pc = np.argmax(deriv)
+    pc_L = ps[idx_pc]
+    pc_stat_err = errors[idx_pc]
+    pc_list.append(pc_L)
+    pc_list_err.append(pc_stat_err)
+    color = colors[i]
+    plt.errorbar(ps, probs, yerr=errors, fmt='.-', capsize=2,
+                 color=color,
+                 label=f"$L = {L}$, $p_c$ = {pc_L:.3f} $\pm$ {pc_stat_err:.3f}",
+                 zorder=2)
+    plt.plot(pc_L, probs[idx_pc], 'o', color='red', markersize=8, zorder=5)
+    plt.errorbar(pc_L, probs[idx_pc], yerr=pc_stat_err,
+                 fmt='o', color='red', capsize=4, capthick=2, zorder=6)
+    plt.axhline(0.5, color='gray', ls='--', label='$P = 0.5$', zorder=1)
+    plt.xlabel('Tree density $p$')
+    plt.ylabel('Percolation probability')
+    plt.title('Estimation of $p_c$ for triangular lattices')
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc='upper left')
+plt.savefig('pc_estimation_triangular.png', dpi=300)
+plt.tight_layout()
+plt.show()
+
+-----------------------------------------
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+
+L_values = np.array([16, 32, 64, 128])
+nu = 4/3
+inv_L = L_values ** (-1/nu)
+
+pc_array = np.array(pc_list)
+pc_err_array = np.array(pc_list_err)
+
+print("pc values:")
+print(pc_array)
+print("L values:")
+print(L_values)
+print("L^{-1/nu} values:")
+print(inv_L)
+
+def linear_func(x, m, b):
+    return m * x + b
+
+popt, pcov = curve_fit(linear_func, inv_L, pc_array, sigma=pc_err_array, absolute_sigma=True)
+m, b = popt
+error_m, error_b = np.sqrt(np.diag(pcov))
+
+print(f"\nFit results:")
+print(f"Slope m = {m:.6f} ± {error_m:.6f}")
+print(f"Intercept b = {b:.6f} ± {error_b:.6f}")
+
+x_fit = np.linspace(0, max(inv_L) + 0.01, 100)
+y_fit = linear_func(x_fit, m, b)
+
+plt.figure(figsize=(10, 7))
+plt.xlim([-0.001, max(inv_L) + 0.01])
+
+plt.errorbar(0, b, yerr=error_b, fmt='ro', capsize=5, markersize=8,
+             label=f'$p_c(\\infty) = {b:.4f} \\pm {error_b:.4f}$')
+
+plt.errorbar(inv_L, pc_array, yerr=pc_err_array, fmt='bo', capsize=5,
+             label='Data', markersize=6)
+
+plt.plot(x_fit, y_fit, 'k--', alpha=0.8,
+         label=f'$p_c = {m:.3f} \\cdot L^{{-1/\\nu}} + {b:.4f}$')
+
+plt.xlabel(r'$L^{-1/\nu}$ with $\nu = 4/3$', fontsize=12)
+plt.ylabel(r'$p_c(L)$', fontsize=12)
+plt.title('Extrapolation of $p_c$ to thermodynamic limit ($L \\to \\infty$)', fontsize=14)
+plt.grid(True, alpha=0.3)
+plt.legend(fontsize=11)
+plt.tight_layout()
+
+plt.savefig('pc_extrapolation.png', dpi=300)
+print("Plot saved as pc_extrapolation.png")
+plt.show()
+
+y_pred = linear_func(inv_L, m, b)
+ss_res = np.sum((pc_array - y_pred) ** 2)
+ss_tot = np.sum((pc_array - np.mean(pc_array)) ** 2)
+r_squared = 1 - (ss_res / ss_tot)
+
+print(f"\nFit quality:")
+print(f"R² = {r_squared:.6f}")
+
+pc_theoretical = 0.50
+print(f"\nComparison with theory:")
+print(f"Extrapolated pc: {b:.4f} ± {error_b:.4f}")
+print(f"Theoretical pc (2D): {pc_theoretical:.4f}")
+print(f"Difference: {abs(b - pc_theoretical):.4f}")
+
+------------------------------------------------
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from collections import deque
+
+def generate_forest(L, p):
+    
+    return np.random.rand(L, L) < p
+
+def get_triangular_neighbors(i, j, L):
+    
+    even = (i % 2 == 0)
+    if even:
+        offsets = [(-1, 0), (-1, +1), (0, -1), (0, +1), (+1, 0), (+1, +1)]
+    else:
+        offsets = [(-1, -1), (-1, 0), (0, -1), (0, +1), (+1, -1), (+1, 0)]
+    return [((i + di) % L, (j + dj) % L) for di, dj in offsets]
+
+def cluster_sizes_triangular(forest):
+    
+    L = forest.shape[0]
+    visited = np.zeros_like(forest, dtype=bool)
+    sizes = []
+    for i in range(L):
+        for j in range(L):
+            if forest[i, j] and not visited[i, j]:
+                size = 0
+                queue = deque([(i, j)])
+                visited[i, j] = True
+                while queue:
+                    ci, cj = queue.popleft()
+                    size += 1
+                    for ni, nj in get_triangular_neighbors(ci, cj, L):
+                        if forest[ni, nj] and not visited[ni, nj]:
+                            visited[ni, nj] = True
+                            queue.append((ni, nj))
+                sizes.append(size)
+    return sizes
+
+def gather_cluster_sizes(L, p, n_samples=100):
+    all_sizes = []
+    for _ in range(n_samples):
+        forest = generate_forest(L, p)
+        all_sizes.extend(cluster_sizes_triangular(forest))
+    return all_sizes
+
+def log_binned_histogram_with_errors(sizes, base=1.3):
+    s = np.array(sizes)
+    s = s[s > 0]
+    if len(s) == 0:
+        return np.array([]), np.array([]), np.array([])
+    max_s = s.max()
+    bins = np.unique(np.logspace(np.log10(1), np.log10(max_s), int(np.log(max_s) / np.log(base))).astype(int))
+    hist, edges = np.histogram(s, bins=bins)
+    centers = (edges[:-1] + edges[1:]) / 2
+    bin_widths = edges[1:] - edges[:-1]
+    total_samples = len(s)
+    norm_hist = hist / (bin_widths * total_samples)
+    errors = np.sqrt(hist) / (bin_widths * total_samples)
+    mask = norm_hist > 0
+    return centers[mask], norm_hist[mask], errors[mask]
+
+def estimate_tau(centers, freqs, errors, s_min=10, s_max=300):
+    mask = (centers >= s_min) & (centers <= s_max) & (freqs > 0)
+    if np.sum(mask) < 3:
+        return None, None, None
+    log_s = np.log(centers[mask])
+    log_ns = np.log(freqs[mask])
+    weights = freqs[mask] / errors[mask]
+    weights /= np.sum(weights)
+    coef, cov = np.polyfit(log_s, log_ns, 1, w=weights, cov=True)
+    tau = -coef[0]
+    tau_err = np.sqrt(cov[0, 0])
+    return tau, tau_err, coef
+
+
+L = 128
+pc_approx = 0.5  
+ps = [pc_approx - 0.3, pc_approx, pc_approx + 0.2]
+
+plt.figure(figsize=(10, 7))
+colors = ['blue', 'red', 'green']
+tau_estimate = None
+
+for i, p in enumerate(ps):
+    print(f"Processing p = {p:.4f}...")
+    sizes = gather_cluster_sizes(L, p, n_samples=2000)
+    print(f" Total clusters found: {len(sizes)}")
+    if sizes:
+        print(f" Max cluster size: {max(sizes)}")
+        print(f" Clusters larger than 100: {sum(s > 100 for s in sizes)}")
+    
+    centers, freqs, errors = log_binned_histogram_with_errors(sizes)
+    plt.errorbar(centers, freqs, yerr=errors, marker='o', linestyle='-', 
+                 capsize=3, capthick=1, color=colors[i], 
+                 label=f'$p = {p:.4f}$', alpha=0.8)
+    
+    if abs(p - pc_approx) < 0.001:
+        tau, tau_err, coef = estimate_tau(centers, freqs, errors)
+        if tau is not None:
+            tau_estimate = tau
+            tau_error = tau_err
+            s_fit = np.logspace(np.log10(5), np.log10(500), 50)
+            fit_line = np.exp(coef[1]) * s_fit**(-tau)
+            plt.plot(s_fit, fit_line, 'k--', linewidth=2, 
+                     label=f'$\\tau = {tau:.3f} \\pm {tau_err:.3f}$')
+            print(f"Estimated tau: {tau:.4f} ± {tau_err:.4f}")
+
+plt.xscale('log')
+plt.yscale('log')
+plt.xlabel('Cluster size $s$', fontsize=12)
+plt.xlim(1, 5e3)
+plt.ylabel('Frequency density', fontsize=12)
+plt.title(f'Cluster size distribution for different $p$ (triangular lattice, L={L})', fontsize=14)
+plt.legend(fontsize=10)
+plt.grid(True, which='both', ls='--', alpha=0.3)
+plt.tight_layout()
+plt.savefig("tau_triangular_with_errors.png", dpi=300, bbox_inches='tight')
+print("Plot saved as tau_triangular_with_errors.png")
+plt.show()
+
+if tau_estimate is not None:
+    print("\nFinal result:")
+    print(f"Estimated tau = {tau_estimate:.3f} ± {tau_error:.3f} (for p ~ p_c)")
+    print(f"Theoretical tau = 187/91 = {187/91:.3f}")
+    print(f"Difference: {abs(tau_estimate - 187/91):.3f}")
+else:
+    print("Could not estimate tau. Check fitting parameters or data quality.")
+
+
+--------------------------------------
+
+import numpy as np
+import matplotlib.pyplot as plt
+from collections import deque
+
+def get_triangular_neighbors(i, j, L):
+    if i % 2 == 0:
+        offsets = [(-1, -1), (-1, 0), (0, -1), (0, 1), (1, -1), (1, 0)]
+    else:
+        offsets = [(-1, 0), (-1, 1), (0, -1), (0, 1), (1, 0), (1, 1)]
+    neighbors = [(i + di, j + dj) for di, dj in offsets if 0 <= i + di < L and 0 <= j + dj < L]
+    return neighbors
+
+def generate_forest(L, p):
+    return np.random.rand(L, L) < p
+
+def largest_cluster_size(forest):
+    L = forest.shape[0]
+    visited = np.zeros_like(forest, dtype=bool)
+    max_size = 0
+    for i in range(L):
+        for j in range(L):
+            if forest[i, j] and not visited[i, j]:
+                size = 0
+                queue = deque([(i, j)])
+                visited[i, j] = True
+                while queue:
+                    ci, cj = queue.popleft()
+                    size += 1
+                    for ni, nj in get_triangular_neighbors(ci, cj, L):
+                        if forest[ni, nj] and not visited[ni, nj]:
+                            visited[ni, nj] = True
+                            queue.append((ni, nj))
+                if size > max_size:
+                    max_size = size
+    return max_size
+
+def average_largest_cluster(L, p, samples):
+    sizes = [largest_cluster_size(generate_forest(L, p)) for _ in range(samples)]
+    mean = np.mean(sizes)
+    error = np.std(sizes, ddof=1) / np.sqrt(samples)
+    return mean, error
+
+L_values = [16, 32, 64, 128, 256]
+p_c = 0.496
+samples = 200
+
+means, errors = [], []
+for L in L_values:
+    mean, error = average_largest_cluster(L, p_c, samples)
+    means.append(mean)
+    errors.append(error)
+
+means = np.array(means)
+errors = np.array(errors)
+
+log_L = np.log10(L_values)
+log_means = np.log10(means)
+log_errors = errors / (means * np.log(10))
+weights = 1 / log_errors**2
+
+coef, cov = np.polyfit(log_L, log_means, 1, w=weights, cov=True)
+d_f = coef[0]
+d_f_err = np.sqrt(cov[0, 0])
+
+import matplotlib.pyplot as plt
+
+plt.errorbar(log_L, log_means, yerr=log_errors, fmt='o', capsize=5)
+plt.plot(log_L, d_f*log_L + coef[1], 'b--', label=f'd_f = {d_f:.3f} ± {d_f_err:.3f}')
+plt.xlabel('log10(L)')
+plt.ylabel('log10(M)')
+plt.title('Fractal dimension estimation on triangular lattice')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.savefig("fractal_dimension_triangular.png", dpi=300)
+plt.show()
+
+print(f"Estimated fractal dimension: {d_f:.3f} ± {d_f_err:.3f}")
+
+------------------------------------------------
+
+import networkx as nx
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+from matplotlib.patches import Patch
+from PIL import Image
+import os
+
+def generar_red_completa(L, prob_enlace_no_local):
+    G = nx.Graph()
+    nodes = [(i, j) for i in range(L) for j in range(L)]
+    G.add_nodes_from(nodes)
+    for i, j in nodes:
+        actual = (i, j)
+        vecinos_locales = [
+            (i + 1, j),
+            (i - 1, j),
+            (i, j + 1),
+            (i, j - 1)
+        ]
+        vecinos_locales = [v for v in vecinos_locales if 0 <= v[0] < L and 0 <= v[1] < L]
+        for vecino in vecinos_locales:
+            if not G.has_edge(actual, vecino):
+                E = random.uniform(0, 1)
+                G.add_edge(actual, vecino, E=E)
+        if random.random() < prob_enlace_no_local:
+            candidatos_no_locales = [n for n in nodes if n != actual and n not in vecinos_locales]
+            if candidatos_no_locales:
+                otro = random.choice(candidatos_no_locales)
+                if not G.has_edge(actual, otro):
+                    E = random.uniform(0, 1)
+                    G.add_edge(actual, otro, E=E)
+    return G
+
+def obtener_color_entrelazamiento(E):
+    if E < 0.25:
+        return '#E3F2FD'  # Azul muy claro
+    elif E < 0.5:
+        return '#90CAF9'  # Azul claro
+    elif E < 0.75:
+        return '#42A5F5'  # Azul medio
+    else:
+        return '#1976D2'  # Azul oscuro
+
+def generar_y_guardar_red_individual(L, p_no_local, seed_offset):
+    print(f"Generating network L={L}, p_non_local={p_no_local}...")
+    random.seed(42 + seed_offset)
+    G = generar_red_completa(L, p_no_local)
+
+    if L <= 16:
+        node_size = 80
+        edge_width = 10.0
+        figsize = (8, 8)
+    elif L <= 32:
+        node_size = 40
+        edge_width = 4.0
+        figsize = (8, 8)
+    elif L <= 64:
+        node_size = 3
+        edge_width = 1.5
+        figsize = (8, 8)
+    else:
+        node_size = 1
+        edge_width = 0.8
+        figsize = (8, 8)
+
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    pos = {(i, j): (j, -i) for i, j in G.nodes()}
+    colores_enlaces = []
+    for u, v in G.edges():
+        E = G.edges[u, v]['E']
+        colores_enlaces.append(obtener_color_entrelazamiento(E))
+
+    nx.draw(G, pos,
+            node_size=node_size,
+            node_color='black',
+            edge_color=colores_enlaces,
+            width=edge_width,
+            with_labels=False,
+            ax=ax)
+
+    ax.set_title(f'L={L}, p_non_local={p_no_local}\nTotal edges: {G.number_of_edges()}',
+                 fontsize=16, pad=20)
+    ax.set_aspect('equal')
+
+    legend_elements = [
+        Patch(facecolor='#E3F2FD', label='E < 0.25 (Low)'),
+        Patch(facecolor='#90CAF9', label='0.25 ≤ E < 0.5 (Medium-low)'),
+        Patch(facecolor='#42A5F5', label='0.5 ≤ E < 0.75 (Medium-high)'),
+        Patch(facecolor='#1976D2', label='E ≥ 0.75 (High)')
+    ]
+    ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(-0.1, 1.1), fontsize=12)
+
+    filename = f'quantum_network_L{L}_p{p_no_local:.1f}.png'
+    plt.savefig(filename, dpi=300, bbox_inches='tight', facecolor='white', pad_inches=0.2)
+    print(f"Saved: {filename}")
+
+    return G, filename
+
+def generar_estadisticas(all_graphs):
+    print("\n=== EDGE STATISTICS ===")
+    print("L\tp_non_local\tTotal\tLocal\tNon-local\t% Non-local")
+    print("-" * 70)
+    L_values = [16, 32, 64, 128]
+    p_no_local_values = [0.0, 0.1, 0.5, 1.0]
+    for i, L in enumerate(L_values):
+        for j, p_no_local in enumerate(p_no_local_values):
+            G = all_graphs[i*4 + j]
+            enlaces_locales = 0
+            enlaces_no_locales = 0
+            for u, v in G.edges():
+                dist_manhattan = abs(u[0] - v[0]) + abs(u[1] - v[1])
+                if dist_manhattan == 1:
+                    enlaces_locales += 1
+                else:
+                    enlaces_no_locales += 1
+            total = enlaces_locales + enlaces_no_locales
+            porcentaje_no_local = (enlaces_no_locales / total * 100) if total > 0 else 0
+            print(f"{L}\t{p_no_local}\t\t{total}\t{enlaces_locales}\t{enlaces_no_locales}\t\t{porcentaje_no_local:.1f}%")
+
+def proceso_completo():
+    L_values = [16, 32, 64, 128]
+    p_no_local_values = [0.0, 0.1, 0.5, 1.0]
+    print("Generating individual network images...")
+    all_graphs = []
+    all_filenames = []
+    for i, L in enumerate(L_values):
+        for j, p_no_local in enumerate(p_no_local_values):
+            seed_offset = i*4 + j
+            G, filename = generar_y_guardar_red_individual(L, p_no_local, seed_offset)
+            all_graphs.append(G)
+            all_filenames.append(filename)
+    print(f"\nStep 2: All {len(all_filenames)} individual images generated!")
+    generar_estadisticas(all_graphs)
+
+if __name__ == "__main__":
+    proceso_completo()
+
