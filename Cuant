@@ -1,3 +1,148 @@
+
+#QUANTUM GIFS
+
+import networkx as nx
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+from matplotlib.patches import Patch
+from PIL import Image
+import os
+
+def generar_red_completa(L, prob_enlace_no_local):
+    G = nx.Graph()
+    nodes = [(i, j) for i in range(L) for j in range(L)]
+    G.add_nodes_from(nodes)
+    for i, j in nodes:
+        actual = (i, j)
+        vecinos_locales = [
+            (i + 1, j),
+            (i - 1, j),
+            (i, j + 1),
+            (i, j - 1)
+        ]
+        vecinos_locales = [v for v in vecinos_locales if 0 <= v[0] < L and 0 <= v[1] < L]
+        for vecino in vecinos_locales:
+            if not G.has_edge(actual, vecino):
+                E = random.uniform(0, 1)
+                G.add_edge(actual, vecino, E=E)
+        if random.random() < prob_enlace_no_local:
+            candidatos_no_locales = [n for n in nodes if n != actual and n not in vecinos_locales]
+            if candidatos_no_locales:
+                otro = random.choice(candidatos_no_locales)
+                if not G.has_edge(actual, otro):
+                    E = random.uniform(0, 1)
+                    G.add_edge(actual, otro, E=E)
+    return G
+
+def obtener_color_entrelazamiento(E):
+    if E < 0.25:
+        return '#E3F2FD'  # Azul muy claro
+    elif E < 0.5:
+        return '#90CAF9'  # Azul claro
+    elif E < 0.75:
+        return '#42A5F5'  # Azul medio
+    else:
+        return '#1976D2'  # Azul oscuro
+
+def generar_y_guardar_red_individual(L, p_no_local, seed_offset):
+    print(f"Generating network L={L}, p_non_local={p_no_local}...")
+    random.seed(42 + seed_offset)
+    G = generar_red_completa(L, p_no_local)
+
+    if L <= 16:
+        node_size = 80
+        edge_width = 10.0
+        figsize = (8, 8)
+    elif L <= 32:
+        node_size = 40
+        edge_width = 4.0
+        figsize = (8, 8)
+    elif L <= 64:
+        node_size = 3
+        edge_width = 1.5
+        figsize = (8, 8)
+    else:
+        node_size = 1
+        edge_width = 0.8
+        figsize = (8, 8)
+
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    pos = {(i, j): (j, -i) for i, j in G.nodes()}
+    colores_enlaces = []
+    for u, v in G.edges():
+        E = G.edges[u, v]['E']
+        colores_enlaces.append(obtener_color_entrelazamiento(E))
+
+    nx.draw(G, pos,
+            node_size=node_size,
+            node_color='black',
+            edge_color=colores_enlaces,
+            width=edge_width,
+            with_labels=False,
+            ax=ax)
+
+    ax.set_title(f'L={L}, p_non_local={p_no_local}\nTotal edges: {G.number_of_edges()}',
+                 fontsize=16, pad=20)
+    ax.set_aspect('equal')
+
+    legend_elements = [
+        Patch(facecolor='#E3F2FD', label='E < 0.25 (Low)'),
+        Patch(facecolor='#90CAF9', label='0.25 ≤ E < 0.5 (Medium-low)'),
+        Patch(facecolor='#42A5F5', label='0.5 ≤ E < 0.75 (Medium-high)'),
+        Patch(facecolor='#1976D2', label='E ≥ 0.75 (High)')
+    ]
+    ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(-0.1, 1.1), fontsize=12)
+
+    filename = f'quantum_network_L{L}_p{p_no_local:.1f}.png'
+    plt.savefig(filename, dpi=300, bbox_inches='tight', facecolor='white', pad_inches=0.2)
+    print(f"Saved: {filename}")
+
+    return G, filename
+
+def generar_estadisticas(all_graphs):
+    print("\n=== EDGE STATISTICS ===")
+    print("L\tp_non_local\tTotal\tLocal\tNon-local\t% Non-local")
+    print("-" * 70)
+    L_values = [16, 32, 64, 128]
+    p_no_local_values = [0.0, 0.1, 0.5, 1.0]
+    for i, L in enumerate(L_values):
+        for j, p_no_local in enumerate(p_no_local_values):
+            G = all_graphs[i*4 + j]
+            enlaces_locales = 0
+            enlaces_no_locales = 0
+            for u, v in G.edges():
+                dist_manhattan = abs(u[0] - v[0]) + abs(u[1] - v[1])
+                if dist_manhattan == 1:
+                    enlaces_locales += 1
+                else:
+                    enlaces_no_locales += 1
+            total = enlaces_locales + enlaces_no_locales
+            porcentaje_no_local = (enlaces_no_locales / total * 100) if total > 0 else 0
+            print(f"{L}\t{p_no_local}\t\t{total}\t{enlaces_locales}\t{enlaces_no_locales}\t\t{porcentaje_no_local:.1f}%")
+
+def proceso_completo():
+    L_values = [16, 32, 64, 128]
+    p_no_local_values = [0.0, 0.1, 0.5, 1.0]
+    print("Generating individual network images...")
+    all_graphs = []
+    all_filenames = []
+    for i, L in enumerate(L_values):
+        for j, p_no_local in enumerate(p_no_local_values):
+            seed_offset = i*4 + j
+            G, filename = generar_y_guardar_red_individual(L, p_no_local, seed_offset)
+            all_graphs.append(G)
+            all_filenames.append(filename)
+    print(f"\nStep 2: All {len(all_filenames)} individual images generated!")
+    generar_estadisticas(all_graphs)
+
+if __name__ == "__main__":
+    proceso_completo()
+
+
+---------------------------------------
+#CRITICAL PERCOLATION 
+
 import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
@@ -74,6 +219,7 @@ plt.show()
 
 -------------------------------------
 
+#CLUSTER DISTRIBUTION
 
 import networkx as nx
 import numpy as np
@@ -237,7 +383,10 @@ if __name__ == "__main__":
     data_pjump = [0.0, 0.1, 0.5, 1.0]
     E_min = 0.6
     resultados, fig = analizar_y_graficar(L, data_pjump, E_min, num_sim=50)
+
 ----------------------------------------------------------
+
+#FRACTAL DIMENSION
 
 import networkx as nx
 import numpy as np
