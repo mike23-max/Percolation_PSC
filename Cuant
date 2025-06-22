@@ -1,0 +1,415 @@
+import networkx as nx
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import random
+from tqdm import tqdm
+
+N = 16
+data_pjump = [0.0, 0.1, 0.5, 1.0]
+Emin_list = np.linspace(0.35, 0.85, 21)
+repeticiones = 300
+
+def simular_prob_percolacion(N, E_min, p_jump, repeticiones):
+    nodes = [(i, j) for i in range(N) for j in range(N)]
+    bottom = set((N-1, j) for j in range(N))
+    contador = 0
+    for _ in range(repeticiones):
+        inicio = random.choice(nodes)
+        activos = [inicio]
+        visitados = {inicio}
+        while activos:
+            i, j = activos.pop()
+            for di, dj in [(1,0),(-1,0),(0,1),(0,-1)]:
+                ni, nj = i+di, j+dj
+                if (ni, nj) in nodes and (ni, nj) not in visitados:
+                    if random.random() >= E_min:
+                        visitados.add((ni, nj))
+                        activos.append((ni, nj))
+            if random.random() < p_jump:
+                salto = random.choice(nodes)
+                if salto not in visitados and random.random() >= E_min:
+                    visitados.add(salto)
+                    activos.append(salto)
+        if any(n in bottom for n in visitados):
+            contador += 1
+    return contador / repeticiones
+
+def estimate_Ec(N, p_jump, Emin_list, repeticiones):
+    perc_probs = []
+    errors = []
+    for E_min in tqdm(Emin_list, desc=f"Estimando E_c para p_jump={p_jump}"):
+        p = simular_prob_percolacion(N, E_min, p_jump, repeticiones)
+        perc_probs.append(p)
+        errors.append(np.sqrt(p * (1 - p) / repeticiones))
+    perc_probs = np.array(perc_probs)
+    errors = np.array(errors)
+    grad = np.gradient(perc_probs, Emin_list)
+    idx = np.argmax(grad)
+    Ecrit = Emin_list[idx]
+    Ecrit_err = errors[idx]
+    return perc_probs, errors, Ecrit, Ecrit_err, idx
+
+def save_results_txt(filename, ps, probs, errors):
+    with open(filename, 'w') as f:
+        f.write("# p probability std_error\n")
+        for p, prob, err in zip(ps, probs, errors):
+            f.write(f"{p:.5f} {prob:.5f} {err:.5f}\n")
+    print(f"Results saved to {filename}")
+
+plt.figure(figsize=(8,6))
+results = {}
+for pj in data_pjump:
+    perc_probs, errors, Ecrit, Ecrit_err, idx = estimate_Ec(N, pj, Emin_list, repeticiones)
+    save_results_txt(f"results_L{N}_pjump{pj}.txt", Emin_list, perc_probs, errors)
+    results[pj] = (Ecrit, Ecrit_err)
+    plt.errorbar(Emin_list, perc_probs, yerr=errors, fmt='o-', capsize=3, label=f'p_jump={pj}')
+
+plt.axhline(0.5, color='k', ls='--', lw=1, label='50%')
+plt.xlabel("Minimum Entanglement $E_{\\min}$")
+plt.ylabel("Probability of Percolation")
+plt.legend()
+plt.grid(True)
+plt.show()
+
+-------------------------------------
+
+
+import networkx as nx
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import random
+from tqdm import tqdm
+from collections import Counter, defaultdict
+
+def encontrar_clusters(N, E_min, p_jump, num_simulaciones=100):
+    nodes = [(i, j) for i in range(N) for j in range(N)]
+    todos_clusters = []
+    
+    for _ in range(num_simulaciones):
+        G = nx.Graph()
+        G.add_nodes_from(nodes)
+        
+        for i in range(N):
+            for j in range(N):
+                for di, dj in [(1,0),(-1,0),(0,1),(0,-1)]:
+                    ni, nj = i+di, j+dj
+                    if 0 <= ni < N and 0 <= nj < N:
+                        if random.random() >= E_min:
+                            G.add_edge((i,j), (ni,nj))
+                
+                if random.random() < p_jump:
+                    salto = random.choice(nodes)
+                    if salto != (i,j) and random.random() >= E_min:
+                        G.add_edge((i,j), salto)
+        
+        clusters = list(nx.connected_components(G))
+        tamaños = [len(cluster) for cluster in clusters]
+        todos_clusters.extend(tamaños)
+    
+    return todos_clusters
+
+def estimate_tau_MLE(tamaños_clusters, s_min=None):
+    s = np.array(tamaños_clusters)
+    if s_min is None:
+        s_min = s.min()
+    s_filt = s[s >= s_min]
+    N = len(s_filt)
+    if N < 2:
+        raise ValueError(f"Muy pocas muestras ≥ s_min={s_min}: sólo {N}")
+
+    suma_logs = np.sum(np.log(s_filt / s_min))
+    tau_hat = 1.0 + N / suma_logs
+    stderr = (tau_hat - 1.0) / np.sqrt(N)
+
+    return tau_hat, stderr, N
+
+def calcular_distribucion_clusters(tamaños_clusters):
+    contador = Counter(tamaños_clusters)
+    tamaños = sorted(contador.keys())
+    frecuencias = [contador[s] for s in tamaños]
+    total_clusters = sum(frecuencias)
+    probabilidades = [f/total_clusters for f in frecuencias]
+    return tamaños, frecuencias, probabilidades
+
+def limpiar_datos(tamaños, probabilidades, min_prob=1e-3, corte_percentil=80):
+    if len(tamaños) == 0:
+        return tamaños, probabilidades
+    
+    indices_validos = [i for i, p in enumerate(probabilidades) if p >= min_prob]
+    
+    if len(indices_validos) < 3:
+        return tamaños, probabilidades
+    
+    tamaños_temp = [tamaños[i] for i in indices_validos]
+    probs_temp = [probabilidades[i] for i in indices_validos]
+    
+    if len(tamaños_temp) > 5:
+        max_tamaño = np.percentile(tamaños_temp, corte_percentil)
+        indices_cortados = [i for i, s in enumerate(tamaños_temp) if s <= max_tamaño]
+        
+        if len(indices_cortados) >= 3:
+            tamaños_limpios = [tamaños_temp[i] for i in indices_cortados]
+            probs_limpias = [probs_temp[i] for i in indices_cortados]
+        else:
+            tamaños_limpios = tamaños_temp
+            probs_limpias = probs_temp
+    else:
+        tamaños_limpios = tamaños_temp
+        probs_limpias = probs_temp
+    
+    return tamaños_limpios, probs_limpias
+
+
+def crear_grafico_limpio(resultados, L, E_min):
+    plt.style.use('seaborn-v0_8-muted')
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    colores = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+    taus = [datos['tau'] for datos in resultados.values()]
+    tau_promedio = np.mean(taus)
+    
+    for i, (p_jump, datos) in enumerate(resultados.items()):
+        tamaños_limpios, probs_limpias = limpiar_datos(
+            datos['tamaños'], datos['probabilidades'], min_prob=1e-3, corte_percentil=85
+        )
+        
+        tamaños_limpios = np.array(tamaños_limpios)
+        probs_limpias = np.array(probs_limpias)
+        mascara = tamaños_limpios < 800
+        tamaños_limpios = tamaños_limpios[mascara]
+        probs_limpias = probs_limpias[mascara]
+
+        if len(tamaños_limpios) > 0:
+            ax.plot(tamaños_limpios, probs_limpias, 
+                    marker='o',
+                    linestyle='-',
+                    linewidth=2,
+                    markersize=4,
+                    label=fr'$p_{{\mathrm{{jump}}}} = {p_jump}$',
+                    color=colores[i % len(colores)],
+                    alpha=0.85)
+
+    x_ref = np.logspace(0.5, 2.2, 100)
+    y_ref = x_ref**(-tau_promedio)
+    y_ref *= 0.2 / max(y_ref)
+    
+    ax.plot(x_ref, y_ref, 'k--', linewidth=2, 
+            label=fr'Fit: $n_s \sim s^{{-{tau_promedio:.2f}}}$ (average τ)')
+
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel(r'Cluster size $s$', fontsize=14)
+    ax.set_ylabel('Frecuency density', fontsize=14)
+    ax.set_title(fr'Cluster size distribution for different $p_{{\mathrm{{jump}}}}$ ($L = {L}$)', fontsize=15)
+    ax.grid(True, which="both", ls=":", alpha=0.5)
+    ax.legend(fontsize=12)
+    plt.tight_layout()
+    return fig, ax
+
+def analizar_y_graficar(L, data_pjump=[0.0, 0.1, 0.5, 1.0], E_min=0.6, num_sim=100):
+    print(f"Analizando para L={L}, E_min={E_min}")
+    
+    resultados = {}
+    for p_jump in tqdm(data_pjump, desc="Procesando"):
+        tamaños_clusters = encontrar_clusters(L, E_min, p_jump, num_sim)
+        tamaños, frecuencias, probabilidades = calcular_distribucion_clusters(tamaños_clusters)
+        
+        tau, tau_err, N_used = estimate_tau_MLE(tamaños_clusters, s_min=10)
+        print(f"p_jump={p_jump}: τ = {tau:.3f} ± {tau_err:.3f} (N={N_used})")
+
+        resultados[p_jump] = {
+            'tamaños': tamaños,
+            'frecuencias': frecuencias,
+            'probabilidades': probabilidades,
+            'tau': tau,
+            'tau_err': tau_err
+        }
+    
+    fig, ax = crear_grafico_limpio(resultados, L, E_min)
+    plt.show()
+    
+    return resultados, fig
+
+if __name__ == "__main__":
+    L = 64
+    data_pjump = [0.0, 0.1, 0.5, 1.0]
+    E_min = 0.6
+    resultados, fig = analizar_y_graficar(L, data_pjump, E_min, num_sim=50)
+----------------------------------------------------------
+
+import networkx as nx
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+from tqdm import tqdm
+from scipy import stats
+
+def calcular_radio_giracion(cluster_coords):
+    if len(cluster_coords) < 2:
+        return 0
+    coords = np.array(cluster_coords)
+    centro_masa = np.mean(coords, axis=0)
+    distancias_sq = np.sum((coords - centro_masa)**2, axis=1)
+    R_g = np.sqrt(np.mean(distancias_sq))
+    return R_g
+
+def analizar_escalado_fractal(N, E_min, p_jump, num_simulaciones=50):
+    nodes = [(i, j) for i in range(N) for j in range(N)]
+    datos_escalado = []
+    
+    for _ in range(num_simulaciones):
+        G = nx.Graph()
+        G.add_nodes_from(nodes)
+        
+        for i in range(N):
+            for j in range(N):
+                for di, dj in [(1,0),(-1,0),(0,1),(0,-1)]:
+                    ni, nj = i+di, j+dj
+                    if 0 <= ni < N and 0 <= nj < N:
+                        if random.random() >= E_min:
+                            G.add_edge((i,j), (ni,nj))
+                
+                if random.random() < p_jump:
+                    salto = random.choice(nodes)
+                    if salto != (i,j) and random.random() >= E_min:
+                        G.add_edge((i,j), salto)
+        
+        clusters = list(nx.connected_components(G))
+        
+        for cluster in clusters:
+            if len(cluster) >= 5:
+                cluster_coords = list(cluster)
+                R_g = calcular_radio_giracion(cluster_coords)
+                datos_escalado.append({
+                    'tamaño': len(cluster),
+                    'radio': R_g
+                })
+    
+    if len(datos_escalado) < 10:
+        return {
+            'D_f_scaling': np.nan,
+            'D_f_scaling_err': np.nan,
+            'r_squared': np.nan,
+            'num_puntos': 0,
+            'pendiente': np.nan,
+            'intercept': np.nan
+        }
+    
+    tamaños = np.array([d['tamaño'] for d in datos_escalado])
+    radios = np.array([d['radio'] for d in datos_escalado])
+    
+    mask = (radios > 0) & (tamaños > 0)
+    tamaños = tamaños[mask]
+    radios = radios[mask]
+    
+    if len(tamaños) < 5:
+        return {
+            'D_f_scaling': np.nan,
+            'D_f_scaling_err': np.nan,
+            'r_squared': np.nan,
+            'num_puntos': len(tamaños),
+            'pendiente': np.nan,
+            'intercept': np.nan
+        }
+    
+    log_s = np.log(tamaños)
+    log_R = np.log(radios)
+    
+    pendiente, intercept, r_value, p_value, std_err = stats.linregress(log_s, log_R)
+    pendiente_err = std_err
+    
+    if pendiente > 0:
+        D_f_scaling = 1.0 / pendiente
+        D_f_scaling_err = (1.0 / pendiente**2) * pendiente_err
+    else:
+        D_f_scaling = np.nan
+        D_f_scaling_err = np.nan
+    
+    return {
+        'D_f_scaling': D_f_scaling,
+        'D_f_scaling_err': D_f_scaling_err,
+        'r_squared': r_value**2,
+        'num_puntos': len(tamaños),
+        'pendiente': pendiente,
+        'intercept': intercept
+    }
+
+
+
+def crear_grafico_escalado(resultados_por_pjump):
+    plt.figure(figsize=(10, 8))
+    colores = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+    
+    for i, (p_jump, datos) in enumerate(resultados_por_pjump.items()):
+        if len(datos['L_values']) >= 3:
+            L_vals = np.array(datos['L_values'])
+            D_f_vals = np.array(datos['D_f_values'])
+            D_f_errs = np.array(datos['D_f_errors'])
+            
+            log_L = np.log10(L_vals)
+            log_D_f = np.log10(D_f_vals)
+            
+            plt.errorbar(log_L, log_D_f, yerr=D_f_errs/D_f_vals/np.log(10), 
+                         fmt='o', color=colores[i % len(colores)], 
+                         markersize=8, capsize=5, capthick=2,
+                         label=f'$p_{{jump}} = {p_jump}$')
+            
+            if len(log_L) >= 2:
+                pendiente, intercept, r_value, p_value, std_err = stats.linregress(log_L, log_D_f)
+                
+                x_fit = np.linspace(min(log_L), max(log_L), 100)
+                y_fit = pendiente * x_fit + intercept
+                plt.plot(x_fit, y_fit, '--', color=colores[i % len(colores)], 
+                         linewidth=2, alpha=0.8)
+                
+                plt.text(0.05, 0.95 - i*0.05, 
+                         f'$p_{{jump}} = {p_jump}$: $d_f = {10**intercept:.3f} \\pm {std_err:.3f}$', 
+                         transform=plt.gca().transAxes, fontsize=10,
+                         bbox=dict(boxstyle="round,pad=0.3", facecolor=colores[i % len(colores)], alpha=0.2))
+    
+    plt.xlabel('log₁₀(L)', fontsize=14)
+    plt.ylabel('log₁₀(D_f)', fontsize=14)
+    plt.title('Fractal dimension estimation vs System size', fontsize=16)
+    plt.grid(True, alpha=0.3)
+    plt.legend(fontsize=12)
+    plt.tight_layout()
+    plt.show()
+
+def calcular_dimension_fractal_scaling(L_values, data_pjump=[0.0, 0.1, 0.5, 1.0], E_min=0.6, num_sim=50):
+    print(f"Calculando dimensión fractal por scaling")
+    print(f"Parámetros: L_values={L_values}, E_min={E_min}, num_simulaciones={num_sim}")
+    print("="*60)
+    
+    resultados_por_pjump = {}
+    
+    for p_jump in data_pjump:
+        print(f"\nProcesando p_jump = {p_jump}")
+        resultados_por_pjump[p_jump] = {'L_values': [], 'D_f_values': [], 'D_f_errors': []}
+        
+        for L in tqdm(L_values, desc=f"p_jump={p_jump}"):
+            resultado = analizar_escalado_fractal(L, E_min, p_jump, num_simulaciones=num_sim)
+            
+            print(f"  L = {L}:")
+            if not np.isnan(resultado['D_f_scaling']):
+                print(f"    Dimensión fractal (D_f): {resultado['D_f_scaling']:.3f} ± {resultado['D_f_scaling_err']:.3f}")
+                resultados_por_pjump[p_jump]['L_values'].append(L)
+                resultados_por_pjump[p_jump]['D_f_values'].append(resultado['D_f_scaling'])
+                resultados_por_pjump[p_jump]['D_f_errors'].append(resultado['D_f_scaling_err'])
+            else:
+                print(f"    Dimensión fractal (D_f): No se pudo calcular (datos insuficientes)")
+    
+    crear_grafico_escalado(resultados_por_pjump)
+    
+    print("\n" + "="*60)
+    print("Cálculo completado")
+    
+    return resultados_por_pjump
+
+if __name__ == "__main__":
+    L_values = [16, 32, 64]
+    data_pjump = [0.0, 0.1, 0.5, 1.0]
+    E_min = 0.6
+    
+    resultados = calcular_dimension_fractal_scaling(L_values, data_pjump, E_min, num_sim=30)
