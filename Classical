@@ -1,3 +1,6 @@
+
+#CLASSICAL GIF
+
 import numpy as np
 from scipy.ndimage import label, binary_dilation
 from PIL import Image
@@ -102,6 +105,8 @@ if __name__ == '__main__':
 
 --------------------------------------------------------------------
 
+#CRITICAL PERCOLATION
+
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import label
@@ -173,6 +178,8 @@ plt.tight_layout()
 plt.show()
  --------------------------------------------------
 
+#CRITICAL PERCOLATION (WITH TXT)
+
 import os
 import glob
 import matplotlib.pyplot as plt
@@ -228,6 +235,7 @@ plt.tight_layout()
 plt.show()
  ----------------------------------------------------
 
+#EXTRAPOLATION OF PC FOR L to infinite
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -312,6 +320,7 @@ print(f"Absolute difference: {abs(b - pc_theoretical):.4f}")
 
 ----------------------------------------------
 
+#DISTRIBUTION OF CLUSTER SIZE
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -428,6 +437,8 @@ else:
 
 ----------------------------------------------------------------
 
+#FRACTAL DIMENSION
+
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -521,6 +532,8 @@ print(f"R² of the fit: {r_squared:.4f}")
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+
+#GIF FOR TRIANGULAR LATTICE
 
 def generate_forest(L, p):
     return np.random.rand(L, L) < p
@@ -622,6 +635,8 @@ def main():
 if __name__ == '__main__':
     main()
 -----------------------------------------------
+
+#PC FOR TRIANGULAR LATTICE
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -752,6 +767,8 @@ if __name__ == "__main__":
     plt.show()
 ---------------------------------
 
+#PC FOR TRIANGULAR LATTICE (WITH TXT)
+
 import matplotlib.pyplot as plt
 import numpy as np
 import glob
@@ -797,6 +814,8 @@ plt.tight_layout()
 plt.show()
 
 -----------------------------------------
+
+#EXTRAPOLATION OF PC FOR L TO INFINITE (TRIANGULAR LATTICE)
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -869,6 +888,7 @@ print(f"Difference: {abs(b - pc_theoretical):.4f}")
 
 ------------------------------------------------
 
+#CLUSTER SIZE FOR TRIANGULAR LATTICE
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -1000,6 +1020,8 @@ else:
 
 
 --------------------------------------
+
+#FRACTAL DIMENSION FOR TRIANGULAR LATTICE
 
 import numpy as np
 import matplotlib.pyplot as plt
