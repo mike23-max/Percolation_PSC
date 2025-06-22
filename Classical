@@ -1,0 +1,34 @@
+import numpy as np
+from scipy.ndimage import label, binary_dilation
+from PIL import Image
+
+
+def generate_forest(L, p):
+  return np.random.rand(L, L) < p
+
+def fire_propagation(forest):
+  burning = np.zeros_like(forest, dtype=bool)
+  burned = np.zeros_like(forest, dtype=bool)
+
+  trees = np.argwhere(forest)
+  if len(trees) == 0:
+   return burned, []
+
+  i, j = trees[np.random.randint(len(trees))]
+  burning[i, j] = True
+
+  frames = []
+  structure = np.array([[0,1,0], [1,1,1], [0,1,0]], dtype=bool)
+
+  first_frame = render_initial_frame(forest, (i, j)) # guardar primer frame
+
+  while np.any(burning):
+    frames.append(render_frame(forest, burned | burning))
+    burned |= burning
+    neighbors = binary_dilation(burning, structure=structure) & forest &␣
+↪~burned
+    burning = neighbors
+
+  last_frame = render_frame(forest, burned) # guardar último frame
+
+  return burned, frames, first_frame, last_frame
